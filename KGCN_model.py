@@ -22,7 +22,7 @@ def readTriple(path,sep=None):
             yield lines
 
 def construct_kg(kgTriples):
-    print('Generate knowledge graph index')
+    print('Generate knowledge graph index.')
     kg = dict()
     for triple in kgTriples:
         head = triple[0]
