@@ -21,7 +21,6 @@ def readTriple(path,sep=None):
                 lines=line.strip().split()
             yield lines
 
-
 def construct_kg(kgTriples):
     print('Generate knowledge graph index')
     kg = dict()
