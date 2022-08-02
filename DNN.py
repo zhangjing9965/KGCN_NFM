@@ -1,13 +1,10 @@
 import os
 import gc
 import random
-import json
 import time
-import numpy as np
 import pandas as pd
 from tensorflow import keras
-from tqdm import tqdm
-from sklearn import metrics
+from utils import *
 from sklearn.preprocessing import LabelEncoder,MinMaxScaler
 from tensorflow.python.keras.callbacks import EarlyStopping
 import tensorflow as tf
@@ -17,7 +14,6 @@ from keras.models import Model
 from keras.callbacks import EarlyStopping
 from keras.layers import Dense, Dropout, Input, Activation, BatchNormalization
 from numpy.random import seed
-from keras.models import load_model
 from keras.backend import clear_session
 
 def init_layer(layer):
@@ -25,37 +21,17 @@ def init_layer(layer):
     weights_initializer = tf.variables_initializer(layer.weights)
     session.run(weights_initializer)
 
-def readTriple(path,sep=None):
-    with open(path,'r',encoding='utf-8') as f:
-        for line in f.readlines():
-            if sep:
-                lines = line.strip().split()
-            else:
-                lines=line.strip().split()
-            yield lines
-
-def readRecData(path):
-    print('Reading DDI triplets...')
-    drug1_set,drug2_set=set(),set()
-    DDIlabel=[]
-    for d1,  d2, label in tqdm(readTriple(path)):
-        drug1_set.add(int(d1))
-        drug2_set.add(int(d2))
-        DDIlabel.append((int(d1),int(d2),int(label)))
-
-    return list(drug1_set),list(drug2_set),DDIlabel
-
 def get_embedding(train_d,test_d,get_scaled,n_components):
-    saver = tf.train.import_meta_graph('./data/KGCN_model_concat64_n7_l2/model_1.ckpt.meta')
+    saver = tf.train.import_meta_graph('./model/KGCN_model_concat64_n7_l2/model_1.ckpt.meta')
 
     from tensorflow.python import pywrap_tensorflow
 
     with tf.Session() as sess:
-        saver.restore(sess, "./data/KGCN_model_concat64_n7_l2/model_1.ckpt")
+        saver.restore(sess, "./model/KGCN_model_concat64_n7_l2/model_1.ckpt")
 
 #显示打印模型的信息
     model_dir = "./"
-    checkpoint_path = os.path.join(model_dir,"./data/KGCN_model_concat64_n7_l2/model_1.ckpt")
+    checkpoint_path = os.path.join(model_dir,"./model/KGCN_model_concat64_n7_l2/model_1.ckpt")
     reader = pywrap_tensorflow.NewCheckpointReader(checkpoint_path)
     var_to_shape_map = reader.get_variable_to_shape_map()
     for key in var_to_shape_map:
@@ -96,62 +72,6 @@ def get_features(data,drugid_df,use_pro):
     else:
         feature = drug1_features
     return feature
-
-def scores(y, pred):
-
-    f1 = metrics.f1_score(y_true=y, y_pred=pred)
-    acc = metrics.accuracy_score(y_true=y, y_pred=pred)
-
-    tp = 0
-    fp = 0
-    tn = 0
-    fn = 0
-    for j in range(len(y)):
-        if y[j] == 1:
-            if y[j] == pred[j]:
-                tp = tp + 1
-            else:
-                fn = fn + 1
-        else:
-            if y[j] == pred[j]:
-                tn = tn + 1
-            else:
-                fp = fp + 1
-    if tp == 0 and fp == 0:
-        sensitivity = float(tp) / (tp + fn)
-        specificity = float(tn) / (tn + fp)
-        precision = 0
-        MCC = 0
-    else:
-        sensitivity = float(tp) / (tp + fn)
-        specificity = float(tn) / (tn + fp)
-        precision = float(tp) / (tp + fp)
-        MCC = float(tp * tn - fp * fn) / (np.sqrt(float((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))))
-
-    Pre = np.float64(precision)
-    Sen = np.float64(sensitivity)
-    Spe = np.float64(specificity)
-    MCC = np.float64(MCC)
-    f1 = np.float64(f1)
-    acc = np.float64(acc)
-
-    return f1, acc, Pre, Sen, Spe, MCC
-
-def write_log(filename: str, log, mode='w'):
-    with open(filename, mode) as writers:
-        writers.write('\n')
-        json.dump(log, writers, indent=4, ensure_ascii=False)
-
-def roc_auc(y,pred):
-    fpr, tpr, thresholds = metrics.roc_curve(y, pred)
-    roc_auc = metrics.auc(fpr, tpr)
-    return roc_auc
-
-def pr_auc(y, pred):
-    precision, recall, thresholds = metrics.precision_recall_curve(y, pred)
-    pr_auc = metrics.auc(recall, precision)
-
-    return pr_auc
 
 def train(i,n_components, use_pro, train_data, test_data,get_scaled):
     train_label = train_data[:, 2]
@@ -231,7 +151,7 @@ def train(i,n_components, use_pro, train_data, test_data,get_scaled):
     train_log['test_spe'] = Spe
     train_log['test_MCC'] = MCC
     train_log['timestamp'] = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
-    write_log('concat64_12AED_DNN_per.txt', log=train_log, mode='a')
+    write_log('./results/DNN_concat64_12AED_per.txt', log=train_log, mode='a')
 
     del dnn
     gc.collect()
@@ -276,10 +196,9 @@ def cross_validation(K_fold, examples):
         if key == 'timestamp':
             continue
         temp[key] = temp[key] / K_fold
-    write_log('concat64_12AED_DNN_results.txt', temp, 'a')
+    write_log('./results/DNN_concat64_12AED_results.txt', temp, 'a')
     print(
         f'Logging Info - {K_fold} fold result: avg_auc: {temp["avg_auc"]}, avg_acc: {temp["avg_acc"]}, avg_f1: {temp["avg_f1"]}, avg_aupr: {temp["avg_aupr"]}, avg_pre: {temp["avg_pre"]}, avg_sen: {temp["avg_sen"]}, avg_spe: {temp["avg_spe"]}, avg_MCC: {temp["avg_MCC"]}')
-
 
 seed(1)
 mms = MinMaxScaler(feature_range=(0,1))
@@ -291,7 +210,6 @@ vector_size = 1088
 drug_id = pd.read_csv('./data/drug_index.csv',delimiter=',', header=None)
 drug_id.columns = ['drug','drug_id']
 drug_id = drug_id['drug_id']
-
 #descriptors preparation
 drug_feats = np.loadtxt('./data/MorganFinger.txt',delimiter=' ')
 drugid_df = pd.concat([drug_id,pd.DataFrame(drug_feats)],axis=1)

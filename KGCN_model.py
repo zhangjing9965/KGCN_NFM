@@ -1,28 +1,18 @@
-import os
-import json
 import gc
 import time
 import random
 import argparse
-import numpy as np
+from utils import *
 from tqdm import tqdm
 import tensorflow as tf
 from abc import abstractmethod
 from tensorflow.keras import backend as K
-from ampligraph.utils import save_model,restore_model
+import sklearn.metrics as m
 from sklearn.model_selection import train_test_split, StratifiedKFold
-
-def readTriple(path,sep=None):
-    with open(path,'r',encoding='utf-8') as f:
-        for line in f.readlines():
-            if sep:
-                lines = line.strip().split()
-            else:
-                lines=line.strip().split()
-            yield lines
+from sklearn.metrics import roc_auc_score, accuracy_score, f1_score, precision_recall_curve
 
 def construct_kg(kgTriples):
-    print('Generate knowledge graph index.')
+    print('Generate knowledge graph index')
     kg = dict()
     for triple in kgTriples:
         head = triple[0]
@@ -36,16 +26,6 @@ def construct_kg(kgTriples):
         kg[tail].append((head, relation))
     return kg
 
-def readRecData(path,test_ratio=0.2):
-    print('Reading DDI triplets...')
-    drug1_set,drug2_set=set(),set()
-    DDIlabel=[]
-    for d1,  d2, label in tqdm(readTriple(path)):
-        drug1_set.add(int(d1))
-        drug2_set.add(int(d2))
-        DDIlabel.append((int(d1),int(d2),int(label)))
-    return list(drug1_set),list(drug2_set),DDIlabel
-
 def readKgData(path):
     print('Reading KG triplets...')
     entity_set, relation_set = set(), set()
@@ -56,7 +36,6 @@ def readKgData(path):
         relation_set.add(int(r))
         triples.append([int(h), int(r), int(t)])
 
-    # 返回实体集合列表，关系集合列表，与三元组列表
     return list(entity_set), list(relation_set), triples
 
 def construct_adj(neighbor_sample_size, kg, entity_num):
@@ -172,10 +151,6 @@ class NeighborAggregator(Aggregator):
 
         return self.act(output)
 
-import tensorflow as tf
-from sklearn.metrics import roc_auc_score, accuracy_score, f1_score, precision_recall_curve
-import sklearn.metrics as m
-
 class KGCN(object):
     def __init__(self, args, n_drug1, n_entity, n_relation, adj_entity, adj_relation):
         self._parse_args(args, adj_entity, adj_relation)
@@ -190,7 +165,7 @@ class KGCN(object):
     def _parse_args(self, args, adj_entity, adj_relation):
         self.adj_entity = adj_entity
         self.adj_relation = adj_relation
-        print("_parse_args" + str(adj_entity.shape))
+        #print("_parse_args" + str(adj_entity.shape))
 
         self.n_iter = args.n_iter
         self.batch_size = args.batch_size
@@ -232,11 +207,8 @@ class KGCN(object):
 
     def get_neighbors(self, seeds):
         print("get_neighbors")
-        print(seeds.shape)
         seeds = tf.expand_dims(seeds, axis=1)
-        print(seeds.shape)
         entities = [seeds]
-        print(len(entities))
         relations = []
         for i in range(self.n_iter):
             neighbor_entities = tf.reshape(tf.gather(self.adj_entity, entities[i]), [self.batch_size, -1])
@@ -338,14 +310,11 @@ class KGCN(object):
     def get_scores(self, sess, feed_dict):
         return sess.run([self.drug2_indices, self.scores_normalized], feed_dict)
 
-
-
 def get_feed_dict(model, data, start, end):
-    feed_dict = {model.user_indices: data[start:end, 0],
-                 model.item_indices: data[start:end, 1],
+    feed_dict = {model.drug1_indices: data[start:end, 0],
+                 model.drug2_indices: data[start:end, 1],
                  model.labels: data[start:end, 2]}
     return feed_dict
-
 
 def ctr_eval(sess, model, data, batch_size):
     start = 0
@@ -376,21 +345,11 @@ def ctr_eval(sess, model, data, batch_size):
         np.mean(aupr_list)), float(np.mean(Pre_list)), float(np.mean(Sen_list)), float(np.mean(Spe_list)), float(
         np.mean(MCC_list))
 
-
-def write_log(filename: str, log, mode='w'):
-    with open(filename, mode) as writers:
-        writers.write('\n')
-        json.dump(log, writers, indent=4, ensure_ascii=False)
-
-
-def train(args, n_user, n_item, n_entity, n_relation, train_data, eval_data, test_data, adj_entity, adj_relation,
+def train(args, n_drug1, n_drug2, n_entity, n_relation, train_data, eval_data, test_data, adj_entity, adj_relation,
           show_loss):
-    model = KGCN(args, n_user, n_entity, n_relation, adj_entity, adj_relation)
+    model = KGCN(args, n_drug1, n_entity, n_relation, adj_entity, adj_relation)
 
     saver = tf.compat.v1.train.Saver()
-
-    # top-K evaluation settings
-    # user_list, train_record, test_record, item_set, k_list = topk_settings(show_topk, train_data, test_data, n_item)
 
     with tf.Session() as sess:
         sess.run(tf.global_variables_initializer())
@@ -406,7 +365,7 @@ def train(args, n_user, n_item, n_entity, n_relation, train_data, eval_data, tes
             if show_loss:
                 print(start, loss)
 
-            # CTR evaluation
+            # evaluation
             train_auc, train_f1, train_acc, train_aupr, train_Pre, train_Sen, train_Spe, train_MCC = ctr_eval(sess,
                                                                                                               model,
                                                                                                               train_data,
@@ -414,43 +373,40 @@ def train(args, n_user, n_item, n_entity, n_relation, train_data, eval_data, tes
             eval_auc, eval_f1, eval_acc, eval_aupr, eval_Pre, eval_Sen, eval_Spe, eval_MCC = ctr_eval(sess, model,
                                                                                                       eval_data,
                                                                                                       args.batch_size)
-            test_auc, test_f1, test_acc, test_aupr, test_Pre, test_Sen, test_Spe, test_MCC = ctr_eval(sess, model,
-                                                                                                      test_data,
-                                                                                                      args.batch_size)
 
-            print(
-                'epoch %d    train_auc: %.4f  train_f1: %.4f    train_acc: %.4f  train_aupr: %.4f    train_pre: %.4f  train_sen: %.4f train_spe: %.4f train_MCC: %.4f '
+            print('epoch %d    train_auc: %.4f  train_f1: %.4f    train_acc: %.4f  train_aupr: %.4f    train_pre: %.4f  train_sen: %.4f train_spe: %.4f train_MCC: %.4f '
                 % (step, train_auc, train_f1, train_acc, train_aupr, train_Pre, train_Sen, train_Spe, train_MCC))
 
-            print(
-                'epoch %d    eval_auc: %.4f  eval_f1: %.4f    eval_acc: %.4f  eval_aupr: %.4f    eval_pre: %.4f  eval_sen: %.4f eval_spe: %.4f eval_MCC: %.4f'
+            print('epoch %d    eval_auc: %.4f  eval_f1: %.4f    eval_acc: %.4f  eval_aupr: %.4f    eval_pre: %.4f  eval_sen: %.4f eval_spe: %.4f eval_MCC: %.4f'
                 % (step, eval_auc, eval_f1, eval_acc, eval_aupr, eval_Pre, eval_Sen, eval_Spe, eval_MCC))
 
-            print(
-                'epoch %d    test_auc: %.4f  test_f1: %.4f    test_acc: %.4f  test_aupr: %.4f    test_pre: %.4f  test_sen: %.4f test_spe: %.4f test_MCC: %.4f'
+        test_auc, test_f1, test_acc, test_aupr, test_Pre, test_Sen, test_Spe, test_MCC = ctr_eval(sess, model,
+                                                                                                      test_data,
+                                                                                                      args.batch_size)
+        print('epoch %d    test_auc: %.4f  test_f1: %.4f    test_acc: %.4f  test_aupr: %.4f    test_pre: %.4f  test_sen: %.4f test_spe: %.4f test_MCC: %.4f'
                 % (step, test_auc, test_f1, test_acc, test_aupr, test_Pre, test_Sen, test_Spe, test_MCC))
 
-            train_log = {'epoch': step}
-            train_log['dev_auc'] = eval_auc
-            train_log['dev_acc'] = eval_acc
-            train_log['dev_f1'] = eval_f1
-            train_log['dev_aupr'] = eval_aupr
-            train_log['dev_pre'] = eval_Pre
-            train_log['dev_sen'] = eval_Sen
-            train_log['dev_spe'] = eval_Spe
-            train_log['dev_MCC'] = eval_MCC
-            train_log['test_auc'] = test_auc
-            train_log['test_acc'] = test_acc
-            train_log['test_f1'] = test_f1
-            train_log['test_aupr'] = test_aupr
-            train_log['test_pre'] = test_Pre
-            train_log['test_sen'] = test_Sen
-            train_log['test_spe'] = test_Spe
-            train_log['test_MCC'] = test_MCC
-            train_log['timestamp'] = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
-            write_log('C:/Users/zou/Desktop/zj_NFM/kgcn_per_concat64_n7_l2.txt', log=train_log, mode='a')
+        train_log = {'epoch': step}
+        train_log['dev_auc'] = eval_auc
+        train_log['dev_acc'] = eval_acc
+        train_log['dev_f1'] = eval_f1
+        train_log['dev_aupr'] = eval_aupr
+        train_log['dev_pre'] = eval_Pre
+        train_log['dev_sen'] = eval_Sen
+        train_log['dev_spe'] = eval_Spe
+        train_log['dev_MCC'] = eval_MCC
+        train_log['test_auc'] = test_auc
+        train_log['test_acc'] = test_acc
+        train_log['test_f1'] = test_f1
+        train_log['test_aupr'] = test_aupr
+        train_log['test_pre'] = test_Pre
+        train_log['test_sen'] = test_Sen
+        train_log['test_spe'] = test_Spe
+        train_log['test_MCC'] = test_MCC
+        train_log['timestamp'] = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
+        write_log('./results/KGCN_per_concat64_n7_l2.txt', log=train_log, mode='a')
 
-        save_path = saver.save(sess, "KGCN_model_concat64_n7_l2/model_1.ckpt")
+        #save_path = saver.save(sess, "./model/KGCN_model_concat64_n7_l2/model_1.ckpt")
 
     del model
     gc.collect()
@@ -480,7 +436,7 @@ def cross_validation(K_fold, examples):
         train_data = np.array(train_d)
 
         train_log = train(args, n_drug1, n_drug2, n_entity, 8, train_data, eval_data, test_data, adj_entity, adj_relation,
-                          False)
+                          True)
 
         temp['avg_auc'] = temp['avg_auc'] + train_log['test_auc']
         temp['avg_acc'] = temp['avg_acc'] + train_log['test_acc']
@@ -496,14 +452,13 @@ def cross_validation(K_fold, examples):
         if key == 'timestamp':
             continue
         temp[key] = temp[key] / K_fold
-    write_log('C:/Users/zou/Desktop/zj_NFM/kgcn_concat_dim64_n7_l2_results.txt', temp, 'a')
+    write_log('./results/KGCN_concat_dim64_n7_l2_results.txt', temp, 'a')
     print(
         f'Logging Info - {K_fold} fold result: avg_auc: {temp["avg_auc"]}, avg_acc: {temp["avg_acc"]}, '
         f'avg_f1: {temp["avg_f1"]}, avg_aupr: {temp["avg_aupr"]}, avg_pre: {temp["avg_pre"]}, avg_sen: {temp["avg_sen"]}, '
         f'avg_spe: {temp["avg_spe"]}, avg_MCC: {temp["avg_MCC"]}')
 
-
-kg_index = './data/kg_index.txt'
+kg_index = './data/KG_index.txt'
 DDI_index = './data/DDI_index.txt'
 drug1_set, drug2_set ,DDIlabel = readRecData(DDI_index)
 n_drug1 = len(drug1_set)
