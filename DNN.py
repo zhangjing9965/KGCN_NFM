@@ -29,7 +29,6 @@ def get_embedding(train_d,test_d,get_scaled,n_components):
     with tf.Session() as sess:
         saver.restore(sess, "./model/KGCN_model_concat64_n7_l2/model_1.ckpt")
 
-#显示打印模型的信息
     model_dir = "./"
     checkpoint_path = os.path.join(model_dir,"./model/KGCN_model_concat64_n7_l2/model_1.ckpt")
     reader = pywrap_tensorflow.NewCheckpointReader(checkpoint_path)
@@ -206,6 +205,7 @@ FIRST=True
 event_num = 2
 droprate = 0.5
 vector_size = 1088
+
 
 drug_id = pd.read_csv('./data/drug_index.csv',delimiter=',', header=None)
 drug_id.columns = ['drug','drug_id']
