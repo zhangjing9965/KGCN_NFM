@@ -10,3 +10,4 @@ pandas==1.1.5
 scikit_learn==0.24.2
 tensorflow==1.13.1
 tqdm==4.63.0
+rdkit==2020.09.1.0
